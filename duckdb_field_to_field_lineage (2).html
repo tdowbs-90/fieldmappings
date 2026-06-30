@@ -1,0 +1,229 @@
+<h2 class="sr-only">Duck DB Tables and Fields relationships to the Import Template</h2>
+<style>
+.fm-wrap { position: relative; padding: 4px 0 16px; max-width: 760px; margin: 0 auto; }
+.fm-legend { display:flex; align-items:center; flex-wrap:wrap; gap:14px; margin-bottom:14px; font-size:12px; color:var(--text-secondary); }
+.fm-legend .item { display:flex; align-items:center; gap:5px; }
+.fm-legend .dot { width:8px; height:8px; border-radius:50%; flex:none; }
+.fm-reset { margin-left:auto; cursor:pointer; text-decoration:underline; opacity:0.75; }
+.fm-reset:hover { opacity:1; }
+.fm-cols { display:flex; justify-content:space-between; }
+.fm-col { flex: 0 1 270px; min-width:0; display:flex; flex-direction:column; }
+.fm-col.right { text-align:right; }
+.fm-group-header { font-size:12px; font-weight:500; color:var(--text-primary); padding:10px 2px 4px; display:flex; align-items:center; gap:6px; }
+.fm-col.right .fm-group-header { justify-content:flex-end; }
+.fm-group-header .dot { width:7px; height:7px; border-radius:50%; flex:none; }
+.fm-row { font-size:12px; color:var(--text-secondary); padding:3px 8px; border-radius:6px; line-height:1.4; cursor:pointer; transition:background .12s,color .12s; }
+.fm-row:hover { background:var(--surface-1); color:var(--text-primary); }
+.fm-row.selected { background:var(--surface-2); color:var(--text-primary); font-weight:600; }
+.fm-row.linked { font-weight:600; }
+.fm-row.linked::before { content:''; display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--dot-color, currentColor); margin-right:6px; vertical-align:middle; }
+svg.fm-svg { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
+svg.fm-svg path { fill:none; transition:opacity .15s, stroke-width .15s; }
+</style>
+<div class="fm-wrap" id="fm-wrap">
+  <div class="fm-legend" id="fm-legend"></div>
+  <div class="fm-cols">
+    <div class="fm-col" id="fm-left"></div>
+    <div class="fm-col right" id="fm-right"></div>
+  </div>
+  <svg class="fm-svg" id="fm-svg"></svg>
+</div>
+<script>
+(function(){
+  const sourceGroups = [
+    { table: 'User Info', color: '#7F77DD', fields: [
+      ['User ID','ExternalId'], ['Owner','Owner'], ['Group ID','GroupID'],
+      ['First Name','FirstName'], ['Last Name','LastName'], ['Gender','Gender'],
+      ['Date of Birth','DateOfBirth'], ['Join Date','JoinDate'], ['Email','Email'],
+      ['Medicare No.','MedicareNo'], ['Organisation','Organisation'], ['Branch','Department'],
+      ['Address','Address'], ['Address 2','Address2'], ['City','City'],
+      ['State / Province','StateProvince'], ['Country','Country'], ['Postal Code','PostalCode'],
+      ['Phone','Phone'], ['Phone Work','PhoneWork'], ['Phone Work Ext.','PhoneWorkExt'],
+      ['Phone Other','PhoneOther'], ['Phone Other Ext.','PhoneOtherExt'], ['Note','Note'],
+      ['Member No.','MemberNo']
+    ]},
+    { table: 'Activities', color: '#D85A30', fields: [
+      ['User ID','ExternalId'], ['Group ID','GroupID'], ['First Name','FirstName'],
+      ['Last Name','LastName'], ['Branch','Department'],
+      ['Amount Paid', ['Balance','BalanceDescription']],
+      ['Price / Amount', ['ActivityPrice','MembershipPrice']],
+      ['Activity','Activity'], ['Next Draft Date','MembershipNextDraftDay'],
+      ['Payment Link','PaymentLink'],
+      ['Discount 1-3 Name/Amount', ['CustomDiscountNames','CustomDiscountAmounts']]
+    ]},
+    { table: 'Multipasses', color: '#BA7517', fields: [
+      ['User ID','ExternalId'], ['Group ID','GroupID'], ['First Name','FirstName'],
+      ['Last Name','LastName'], ['Branch','Department'], ['Multipass','Multipass'],
+      ['Price by Pass','PriceByPass'], ['Remaining Passes','RemainingPasses'],
+      ['Expiration Date','MultipassExpiration']
+    ]},
+    { table: 'Balances', color: '#378ADD', fields: [
+      ['User ID','ExternalId'], ['Group ID','GroupID'], ['First Name','FirstName'],
+      ['Last Name','LastName'], ['Branch','Department'], ['Amount','Balance'],
+      ['Ledger Code','LedgerCode'], ['Description','BalanceDescription']
+    ]},
+    { table: 'Memberships', color: '#1D9E75', fields: [
+      ['User ID','ExternalId'], ['Group ID','GroupID'], ['First Name','FirstName'],
+      ['Last Name','LastName'], ['Branch','Department'], ['Membership','Membership'],
+      ['Expiration','MembershipExpiration'], ['Recurring Price','MembershipPrice'],
+      ['Recurring Billing Day','MembershipBillingDay'],
+      ['Next Billing Date','MembershipNextDraftDay'], ['Payment Method Id','PaymentLink']
+    ]}
+  ];
+
+  const destGroups = [
+    { category: 'Identity & contact', fields: ['Owner','GroupID','ExternalId','FirstName','LastName','Gender','DateOfBirth','JoinDate','Email','MedicareNo','Organisation','Department','Address','Address2','City','StateProvince','Country','PostalCode','Phone','PhoneWork','PhoneWorkExt','PhoneOther','PhoneOtherExt','Note','MemberNo'] },
+    { category: 'Balance', fields: ['Balance','BalanceDescription','LedgerCode'] },
+    { category: 'Activity', fields: ['Activity','ActivityPrice','CustomDiscountNames','CustomDiscountAmounts'] },
+    { category: 'Membership', fields: ['Membership','MembershipExpiration','MembershipPrice','MembershipBillingDay','MembershipNextDraftDay','PaymentLink'] },
+    { category: 'Multipass', fields: ['Multipass','PriceByPass','RemainingPasses','MultipassExpiration'] }
+  ];
+
+  function humanize(key){ return key.replace(/([a-z0-9])([A-Z])/g,'$1 $2'); }
+
+  const leftEl = document.getElementById('fm-left');
+  const rightEl = document.getElementById('fm-right');
+  const legendEl = document.getElementById('fm-legend');
+  const svg = document.getElementById('fm-svg');
+  const wrap = document.getElementById('fm-wrap');
+
+  const srcElByKey = new Map();
+  const destElByKey = new Map();
+  const tableColorByKey = new Map();
+  const connections = [];
+
+  sourceGroups.forEach(g=>{
+    const h=document.createElement('div'); h.className='fm-group-header';
+    h.innerHTML = '<span class="dot" style="background:'+g.color+'"></span>'+g.table;
+    leftEl.appendChild(h);
+    g.fields.forEach(pair=>{
+      const label=pair[0], dest=pair[1];
+      const row=document.createElement('div'); row.className='fm-row'; row.textContent=label;
+      leftEl.appendChild(row);
+      const key=g.table+'::'+label;
+      srcElByKey.set(key,row);
+      tableColorByKey.set(key,g.color);
+      const dests = Array.isArray(dest)?dest:[dest];
+      dests.forEach(d=>connections.push({srcKey:key,destKey:d,color:g.color}));
+    });
+    const li=document.createElement('div'); li.className='item';
+    li.innerHTML='<span class="dot" style="background:'+g.color+'"></span>'+g.table;
+    legendEl.appendChild(li);
+  });
+
+  const resetBtn=document.createElement('span');
+  resetBtn.className='fm-reset'; resetBtn.id='fm-reset'; resetBtn.textContent='Reset view';
+  legendEl.appendChild(resetBtn);
+
+  destGroups.forEach(g=>{
+    const h=document.createElement('div'); h.className='fm-group-header'; h.textContent=g.category;
+    rightEl.appendChild(h);
+    g.fields.forEach(f=>{
+      const row=document.createElement('div'); row.className='fm-row'; row.textContent=humanize(f);
+      rightEl.appendChild(row);
+      destElByKey.set(f,row);
+    });
+  });
+
+  const pathsBySrc = new Map();
+  const pathsByDest = new Map();
+  const srcToDests = new Map();
+  const destToSrcs = new Map();
+  connections.forEach(c=>{
+    if(!srcToDests.has(c.srcKey)) srcToDests.set(c.srcKey,[]);
+    srcToDests.get(c.srcKey).push({destKey:c.destKey,color:c.color});
+    if(!destToSrcs.has(c.destKey)) destToSrcs.set(c.destKey,[]);
+    destToSrcs.get(c.destKey).push({srcKey:c.srcKey,color:c.color});
+  });
+
+  let selected = null;
+
+  function draw(){
+    svg.innerHTML='';
+    pathsBySrc.clear(); pathsByDest.clear();
+    const wrapRect = wrap.getBoundingClientRect();
+    connections.forEach(c=>{
+      const s = srcElByKey.get(c.srcKey);
+      const d = destElByKey.get(c.destKey);
+      if(!s||!d) return;
+      const sr=s.getBoundingClientRect(), dr=d.getBoundingClientRect();
+      const x1=sr.right-wrapRect.left, y1=sr.top+sr.height/2-wrapRect.top;
+      const x2=dr.left-wrapRect.left, y2=dr.top+dr.height/2-wrapRect.top;
+      const mx=(x1+x2)/2;
+      const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+      path.setAttribute('d','M'+x1+','+y1+' C'+mx+','+y1+' '+mx+','+y2+' '+x2+','+y2);
+      path.setAttribute('stroke',c.color);
+      svg.appendChild(path);
+      if(!pathsBySrc.has(c.srcKey)) pathsBySrc.set(c.srcKey,[]);
+      pathsBySrc.get(c.srcKey).push(path);
+      if(!pathsByDest.has(c.destKey)) pathsByDest.set(c.destKey,[]);
+      pathsByDest.get(c.destKey).push(path);
+    });
+    applyHighlight();
+  }
+
+  function applyHighlight(){
+    const allPaths = svg.querySelectorAll('path');
+    if(!selected){
+      allPaths.forEach(p=>{ p.setAttribute('stroke-opacity','0.38'); p.setAttribute('stroke-width','1.2'); });
+      return;
+    }
+    const list = selected.type==='src' ? (pathsBySrc.get(selected.key)||[]) : (pathsByDest.get(selected.key)||[]);
+    const activeSet = new Set(list);
+    allPaths.forEach(p=>{
+      if(activeSet.has(p)){ p.setAttribute('stroke-opacity','1'); p.setAttribute('stroke-width','2.6'); }
+      else { p.setAttribute('stroke-opacity','0.05'); p.setAttribute('stroke-width','1'); }
+    });
+  }
+
+  function clearRowStyles(){
+    document.querySelectorAll('.fm-row').forEach(r=>{
+      r.classList.remove('selected'); r.classList.remove('linked');
+      r.style.color=''; r.style.removeProperty('--dot-color');
+    });
+  }
+
+  function setRowSelectedStyle(){
+    clearRowStyles();
+    if(!selected) return;
+    if(selected.type==='src'){
+      const color = tableColorByKey.get(selected.key);
+      const el = srcElByKey.get(selected.key);
+      if(el){ el.classList.add('selected'); el.style.color=color; }
+      (srcToDests.get(selected.key)||[]).forEach(({destKey,color:c})=>{
+        const d = destElByKey.get(destKey);
+        if(d){ d.classList.add('linked'); d.style.color=c; d.style.setProperty('--dot-color',c); }
+      });
+    } else {
+      const el = destElByKey.get(selected.key);
+      if(el){ el.classList.add('selected'); }
+      (destToSrcs.get(selected.key)||[]).forEach(({srcKey,color:c})=>{
+        const s = srcElByKey.get(srcKey);
+        if(s){ s.classList.add('linked'); s.style.color=c; s.style.setProperty('--dot-color',c); }
+      });
+    }
+  }
+
+  function selectRow(type,key){
+    if(selected && selected.type===type && selected.key===key){ selected=null; }
+    else { selected={type,key}; }
+    applyHighlight();
+    setRowSelectedStyle();
+  }
+
+  srcElByKey.forEach((el,key)=> el.addEventListener('click',()=>selectRow('src',key)) );
+  destElByKey.forEach((el,key)=> el.addEventListener('click',()=>selectRow('dest',key)) );
+
+  resetBtn.addEventListener('click',(e)=>{ e.stopPropagation(); selected=null; applyHighlight(); setRowSelectedStyle(); });
+
+  document.addEventListener('click',(e)=>{
+    if(!e.target.closest('.fm-row') && !e.target.closest('#fm-reset')){
+      if(selected){ selected=null; applyHighlight(); setRowSelectedStyle(); }
+    }
+  });
+
+  requestAnimationFrame(()=>requestAnimationFrame(draw));
+  document.fonts.ready.then(()=>requestAnimationFrame(draw));
+  new ResizeObserver(()=>draw()).observe(wrap);
+})();
+</script>
